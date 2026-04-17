@@ -26,21 +26,3 @@ A simple web-based Hotel Management System with role-based access for Admin/Fron
    ```bash
    npm install
    ```
-3. Start the server:
-   ```bash
-   npm start
-   ```
-4. Open http://localhost:3000 in the browser.
-
-## Demo credentials
-
-- admin@hotel.com / password
-- food@hotel.com / password
-- accounting@hotel.com / password
-- housekeeping@hotel.com / password
-
-## Notes
-
-- Data is stored in `hotel.db` using SQLite.
-- Real-time updates are supported through the backend data model and refreshed views.
-- This implementation is a proof of concept with centralized data sharing across departments.
