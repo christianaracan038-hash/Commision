@@ -1,0 +1,257 @@
+:root {
+  --primary: #1f3d7a;
+  --secondary: #f2f4f8;
+  --accent: #3a7ca5;
+  --success: #1f9d55;
+  --danger: #d64550;
+  --text: #222;
+  --surface: #ffffff;
+  --border: #dfe3ea;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, system-ui, sans-serif;
+  background: #eef2f8;
+  color: var(--text);
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.view {
+  display: none;
+}
+
+.view.active {
+  display: flex;
+}
+
+#login-view {
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  width: min(520px, 90vw);
+  box-shadow: 0 12px 35px rgba(15, 23, 42, 0.08);
+}
+
+.card h1,
+.card h2,
+.card h3 {
+  margin-top: 0;
+}
+
+label {
+  display: block;
+  margin-top: 16px;
+  font-weight: 600;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-top: 8px;
+  background: #fff;
+}
+
+textarea {
+  min-height: 100px;
+}
+
+button {
+  appearance: none;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 18px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--primary);
+  color: #fff;
+}
+
+button.secondary {
+  background: #e1e7f2;
+  color: var(--text);
+}
+
+button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.error {
+  color: var(--danger);
+  margin-top: 12px;
+}
+
+.hint {
+  margin-top: 12px;
+  color: #667085;
+}
+
+.app {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 260px;
+  padding: 28px 20px;
+  background: var(--primary);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.brand {
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.role-label {
+  font-size: 0.95rem;
+  opacity: 0.9;
+}
+
+nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+nav button {
+  width: 100%;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.content {
+  flex: 1;
+  padding: 28px;
+}
+
+.panel {
+  min-height: 100vh;
+}
+
+.hidden {
+  display: none;
+}
+
+.overview-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.info-card,
+.room-card,
+.order-card,
+.billing-card,
+.task-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.card-list {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.room-card button,
+.order-card button,
+.billing-card button,
+.task-card button {
+  justify-self: flex-start;
+  margin-top: 8px;
+}
+
+.badge {
+  display: inline-flex;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.badge.success {
+  background: #daf4e2;
+  color: var(--success);
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+}
+
+.modal {
+  width: min(560px, 90vw);
+  background: var(--surface);
+  border-radius: 18px;
+  padding: 24px;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.18);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+}
+
+table th,
+table td {
+  border: 1px solid var(--border);
+  padding: 12px;
+  text-align: left;
+}
+
+@media (max-width: 900px) {
+  .app {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .content {
+    padding: 18px;
+  }
+}

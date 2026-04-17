@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hotel Management System</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <div id="login-view" class="view active">
+      <div class="card">
+        <h1>Hotel Management Login</h1>
+        <form id="login-form">
+          <label>Email</label>
+          <input type="email" id="email" placeholder="admin@hotel.com" required />
+          <label>Password</label>
+          <input type="password" id="password" placeholder="password" required />
+          <button type="submit">Login</button>
+          <p class="hint">Use one of: admin@hotel.com, food@hotel.com, accounting@hotel.com, housekeeping@hotel.com / password</p>
+          <p id="login-error" class="error"></p>
+        </form>
+      </div>
+    </div>
+
+    <div id="app-view" class="view">
+      <aside class="sidebar">
+        <div class="brand">Hotel Management</div>
+        <div id="role-label" class="role-label"></div>
+        <nav id="nav-links"></nav>
+        <button id="logout-button" class="secondary">Logout</button>
+      </aside>
+      <main class="content">
+        <section id="dashboard-view" class="panel"></section>
+        <section id="rooms-view" class="panel hidden"></section>
+        <section id="billing-view" class="panel hidden"></section>
+        <section id="orders-view" class="panel hidden"></section>
+        <section id="receipts-view" class="panel hidden"></section>
+        <section id="ledger-view" class="panel hidden"></section>
+        <section id="housekeeping-view" class="panel hidden"></section>
+      </main>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
