@@ -1752,30 +1752,17 @@ async function openBookingForm(room) {
           </label>
 
           <label>Food Orders</label>
-          <div id="food-dropdown-wrapper" style="position: relative;">
-            <div id="food-dropdown-trigger" style="
-              padding: 10px; border: 1px solid #ddd; border-radius: 4px;
-              background: white; cursor: pointer; display: flex;
-              justify-content: space-between; align-items: center; user-select: none;
-            ">
-              <span id="food-trigger-label">Select food items...</span>
-              <span id="food-dropdown-arrow">▼</span>
-            </div>
-            <div id="food-dropdown-panel" style="
-              display: none; position: absolute; top: 100%; left: 0; right: 0;
-              z-index: 1000; background: white; border: 1px solid #ddd;
-              border-top: none; border-radius: 0 0 4px 4px;
-              max-height: 220px; overflow-y: auto; box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-            ">
-              <div id="menu-items-container"></div>
-            </div>
-          </div>
+          <div id="menu-items-container" class="food-grid"></div>
           <span class="field-error" id="err-food" style="color:red; font-size:0.8em; display:none;"></span>
 
-          <div id="selected-items-display" style="
-            margin-top: 10px; padding: 10px; background: #f5f5f5;
-            border-radius: 4px; min-height: 20px;
-          "><small>No items selected</small></div>
+          <div id="selected-items-display" class="selected-summary hidden">
+            <div class="selected-summary-title">📋 Order Summary</div>
+            <div class="selected-items-list"></div>
+            <div class="food-total">
+              <span class="food-total-label">Total:</span>
+              <span class="food-total-amount">₱0.00</span>
+            </div>
+          </div>
 
           <label>Serve Time
             <input id="serve_time" type="time" />
@@ -1813,9 +1800,11 @@ async function openBookingForm(room) {
     const selectedItems = new Map();
     const menuContainer = wrapper.querySelector("#menu-items-container");
     const selectedDisplay = wrapper.querySelector("#selected-items-display");
-    const triggerLabel = wrapper.querySelector("#food-trigger-label");
-    const dropdownPanel = wrapper.querySelector("#food-dropdown-panel");
-    const dropdownArrow = wrapper.querySelector("#food-dropdown-arrow");
+    const selectedItemsList = selectedDisplay.querySelector(
+      ".selected-items-list",
+    );
+    const selectedTotalAmount =
+      selectedDisplay.querySelector(".food-total-amount");
     const formErrorBanner = wrapper.querySelector("#form-error-banner");
 
     // ── Helper: show / clear inline field errors ───────────────────
@@ -1845,25 +1834,7 @@ async function openBookingForm(room) {
       formErrorBanner.style.display = "none";
     }
 
-    // ── 4. Dropdown toggle ─────────────────────────────────────────
-    wrapper
-      .querySelector("#food-dropdown-trigger")
-      .addEventListener("click", () => {
-        const isOpen = dropdownPanel.style.display === "block";
-        dropdownPanel.style.display = isOpen ? "none" : "block";
-        dropdownArrow.textContent = isOpen ? "▼" : "▲";
-      });
-
-    document.addEventListener("click", function closeDropdown(e) {
-      const dropdownWrapper = wrapper.querySelector("#food-dropdown-wrapper");
-      if (dropdownWrapper && !dropdownWrapper.contains(e.target)) {
-        dropdownPanel.style.display = "none";
-        dropdownArrow.textContent = "▼";
-        document.removeEventListener("click", closeDropdown);
-      }
-    });
-
-    // ── 5. Render menu rows ────────────────────────────────────────
+    // ── 4. Render food cards ───────────────────────────────────────
     menuData.items.forEach((item, index) => {
       // Guard against malformed menu items
       if (!item || !item.name || item.price == null) {
@@ -1874,110 +1845,148 @@ async function openBookingForm(room) {
         return;
       }
 
-      const row = document.createElement("div");
-      row.style.cssText = `
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 8px 12px; border-bottom: 1px solid #f0f0f0; gap: 8px;
+      const card = document.createElement("div");
+      card.className = "food-card";
+      card.dataset.itemName = item.name;
+      card.dataset.itemPrice = item.price;
+
+      card.innerHTML = `
+        <div class="food-card-check">✓</div>
+        <div class="food-name">${item.name}</div>
+        <div class="food-price">₱${parseFloat(item.price).toFixed(2)}</div>
+        <div class="qty-control" style="display: none;">
+          <button type="button" class="qty-btn qty-minus">−</button>
+          <input type="number" class="qty-input" min="1" max="99" value="1" />
+          <button type="button" class="qty-btn qty-plus">+</button>
+        </div>
+        <div class="food-qty-display" style="display: none;">0 item</div>
       `;
 
-      row.innerHTML = `
-        <label style="display:flex; align-items:center; gap:8px; flex:1; cursor:pointer;">
-          <input type="checkbox" class="item-checkbox"
-            data-name="${item.name}" data-price="${item.price}" style="cursor:pointer;" />
-          <span>${item.name}</span>
-        </label>
-        <span style="color:#888; font-size:0.85em;">₱${item.price}</span>
-        <div class="qty-controls" style="display:none; align-items:center; gap:4px;">
-          <button type="button" class="qty-minus" style="
-            width:24px; height:24px; border:1px solid #ddd;
-            background:#fff; border-radius:4px; cursor:pointer; font-size:14px;">−</button>
-          <span class="qty-value" style="min-width:20px; text-align:center;">1</span>
-          <button type="button" class="qty-plus" style="
-            width:24px; height:24px; border:1px solid #ddd;
-            background:#fff; border-radius:4px; cursor:pointer; font-size:14px;">+</button>
-        </div>`;
+      const qtyControl = card.querySelector(".qty-control");
+      const qtyInput = card.querySelector(".qty-input");
+      const qtyDisplay = card.querySelector(".food-qty-display");
+      const minusBtn = card.querySelector(".qty-minus");
+      const plusBtn = card.querySelector(".qty-plus");
 
-      const checkbox = row.querySelector(".item-checkbox");
-      const qtyControls = row.querySelector(".qty-controls");
-      const qtyValue = row.querySelector(".qty-value");
-      const minusBtn = row.querySelector(".qty-minus");
-      const plusBtn = row.querySelector(".qty-plus");
+      // Toggle card selection
+      card.addEventListener("click", (e) => {
+        // Don't toggle if clicking quantity buttons
+        if (e.target.classList.contains("qty-btn") || e.target === qtyInput) {
+          return;
+        }
 
-      checkbox.addEventListener("change", () => {
         clearFieldError("food");
         clearBanner();
-        if (checkbox.checked) {
+
+        const isSelected = card.classList.contains("selected");
+
+        if (!isSelected) {
+          // Select the card
+          card.classList.add("selected");
+          qtyControl.style.display = "flex";
           selectedItems.set(item.name, {
             name: item.name,
             price: item.price,
             qty: 1,
           });
-          qtyControls.style.display = "flex";
-          qtyValue.textContent = "1";
+          qtyInput.value = 1;
+          updateSelectedDisplay();
         } else {
+          // Deselect the card
+          card.classList.remove("selected");
+          qtyControl.style.display = "none";
           selectedItems.delete(item.name);
-          qtyControls.style.display = "none";
-          qtyValue.textContent = "1";
+          updateSelectedDisplay();
         }
-        updateSelectedDisplay();
       });
 
+      // Quantity controls
       minusBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        const entry = selectedItems.get(item.name);
-        if (!entry) {
-          console.warn(`qty minus: "${item.name}" not found in selectedItems`);
-          return;
-        }
-        if (entry.qty <= 1) {
+        const current = parseInt(qtyInput.value) || 1;
+        if (current <= 1) {
+          card.classList.remove("selected");
+          qtyControl.style.display = "none";
           selectedItems.delete(item.name);
-          checkbox.checked = false;
-          qtyControls.style.display = "none";
-          qtyValue.textContent = "1";
+          updateSelectedDisplay();
         } else {
-          entry.qty--;
-          qtyValue.textContent = entry.qty;
+          const newQty = current - 1;
+          qtyInput.value = newQty;
+          selectedItems.get(item.name).qty = newQty;
+          updateSelectedDisplay();
         }
-        updateSelectedDisplay();
       });
 
       plusBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        const entry = selectedItems.get(item.name);
-        if (!entry) {
-          console.warn(`qty plus: "${item.name}" not found in selectedItems`);
-          return;
-        }
-        if (entry.qty >= 99) {
+        const current = parseInt(qtyInput.value) || 1;
+        if (current < 99) {
+          const newQty = current + 1;
+          qtyInput.value = newQty;
+          selectedItems.get(item.name).qty = newQty;
+          updateSelectedDisplay();
+        } else {
           showFieldError(
             "food",
             `⚠️ Max quantity (99) reached for "${item.name}".`,
           );
-          return;
         }
-        entry.qty++;
-        qtyValue.textContent = entry.qty;
+      });
+
+      qtyInput.addEventListener("change", (e) => {
+        e.stopPropagation();
+        let value = parseInt(qtyInput.value) || 1;
+        if (value < 1) value = 1;
+        if (value > 99) value = 99;
+        qtyInput.value = value;
+        selectedItems.get(item.name).qty = value;
         updateSelectedDisplay();
       });
 
-      menuContainer.appendChild(row);
+      menuContainer.appendChild(card);
     });
 
-    // ── 6. Update summary display ──────────────────────────────────
+    // ── 5. Update summary display ──────────────────────────────────
     function updateSelectedDisplay() {
       if (selectedItems.size === 0) {
-        triggerLabel.textContent = "Select food items...";
-        selectedDisplay.innerHTML = "<small>No items selected</small>";
+        selectedDisplay.classList.add("hidden");
       } else {
+        selectedDisplay.classList.remove("hidden");
         const entries = Array.from(selectedItems.values());
-        triggerLabel.textContent = `${selectedItems.size} item(s) selected`;
-        selectedDisplay.innerHTML =
-          "<strong>Selected:</strong> " +
-          entries.map((e) => `${e.name} x${e.qty}`).join(", ");
+        let totalAmount = 0;
+
+        // Build items list
+        selectedItemsList.innerHTML = entries
+          .map((e) => {
+            const itemTotal = e.price * e.qty;
+            totalAmount += itemTotal;
+            return `
+              <div class="selected-item">
+                <span class="selected-item-name">${e.name}</span>
+                <span class="selected-item-qty">x${e.qty}</span>
+                <span class="selected-item-price">₱${itemTotal.toFixed(2)}</span>
+              </div>
+            `;
+          })
+          .join("");
+
+        // Update total
+        selectedTotalAmount.textContent = `₱${totalAmount.toFixed(2)}`;
+
+        // Update card visuals
+        menuContainer.querySelectorAll(".food-card").forEach((c) => {
+          const itemName = c.dataset.itemName;
+          if (selectedItems.has(itemName)) {
+            const entry = selectedItems.get(itemName);
+            const qtyDisplay = c.querySelector(".food-qty-display");
+            qtyDisplay.textContent = `${entry.qty} item${entry.qty > 1 ? "s" : ""}`;
+          }
+        });
       }
     }
 
-    // ── 7. Clear errors on input ───────────────────────────────────
+    // ── 6. Clear errors on input ───────────────────────────────────
+    // ── 6. Clear errors on input ───────────────────────────────────
     wrapper.querySelector("#guest_name").addEventListener("input", () => {
       clearFieldError("guest_name");
       clearBanner();
@@ -2007,12 +2016,12 @@ async function openBookingForm(room) {
       clearBanner();
     });
 
-    // ── 8. Cancel ──────────────────────────────────────────────────
+    // ── 7. Cancel ──────────────────────────────────────────────────
     wrapper.querySelector("#cancel-booking").addEventListener("click", () => {
       wrapper.remove();
     });
 
-    // ── 9. Confirm + Validation ────────────────────────────────────
+    // ── 8. Confirm + Validation ────────────────────────────────────
     wrapper
       .querySelector("#confirm-booking")
       .addEventListener("click", async () => {
@@ -2229,28 +2238,19 @@ async function openUpdateOrderForm(bookingId, roomNumber, currentOrder) {
     const formHtml = `
       <div class="modal-overlay">
         <div class="modal">
-          <h3>Add Order for Room ${roomNumber}</h3>
+          <h3>Add/Update Order for Room ${roomNumber}</h3>
 
           <label>Food Orders</label>
+          <div id="menu-items-container" class="food-grid"></div>
+          <span class="field-error" id="err-food" style="color:red; font-size:0.8em; display:none;"></span>
 
-          <!-- Dropdown -->
-          <div class="dropdown">
-            <button id="dropdown-btn" class="dropdown-btn">
-              Select Food Items ▼
-            </button>
-            <div id="dropdown-menu" class="dropdown-menu" style="display:none;">
+          <div id="selected-items-display" class="selected-summary hidden">
+            <div class="selected-summary-title">📋 Order Summary</div>
+            <div class="selected-items-list"></div>
+            <div class="food-total">
+              <span class="food-total-label">Total:</span>
+              <span class="food-total-amount">₱0.00</span>
             </div>
-          </div>
-
-          <!-- Selected Items -->
-          <div id="selected-items-display" style="
-            margin-top: 10px;
-            padding: 10px;
-            background: #f5f5f5;
-            border-radius: 4px;
-            min-height: 20px;
-          ">
-            <small>No items selected</small>
           </div>
 
           <label>Serve Time
@@ -2269,60 +2269,192 @@ async function openUpdateOrderForm(bookingId, roomNumber, currentOrder) {
     wrapper.innerHTML = formHtml;
     document.body.appendChild(wrapper);
 
-    const selectedItems = new Set();
-    const dropdownBtn = wrapper.querySelector("#dropdown-btn");
-    const dropdownMenu = wrapper.querySelector("#dropdown-menu");
+    // ── 3. Grab DOM references ─────────────────────────────────────
+    const selectedItems = new Map();
+    const menuContainer = wrapper.querySelector("#menu-items-container");
     const selectedDisplay = wrapper.querySelector("#selected-items-display");
+    const selectedItemsList = selectedDisplay.querySelector(
+      ".selected-items-list",
+    );
+    const selectedTotalAmount =
+      selectedDisplay.querySelector(".food-total-amount");
+    const formErrorBanner = wrapper.querySelector("#err-food");
 
     // Preload existing order
     const currentItems = currentOrder
       ? currentOrder.split(",").map((i) => i.trim())
       : [];
 
-    // Toggle dropdown
-    dropdownBtn.addEventListener("click", () => {
-      dropdownMenu.style.display =
-        dropdownMenu.style.display === "none" ? "block" : "none";
-    });
+    // ── Helper: show / clear field errors ───────────────────
+    function showFieldError(message) {
+      formErrorBanner.textContent = message;
+      formErrorBanner.style.display = message ? "inline" : "none";
+    }
 
-    // Render dropdown items
-    menuData.items.forEach((item) => {
-      const itemRow = document.createElement("label");
-      itemRow.style.display = "block";
-      itemRow.style.padding = "6px";
+    function clearFieldError() {
+      showFieldError("");
+    }
 
-      const isChecked = currentItems.includes(item.name);
+    // ── 4. Render food cards ───────────────────────────────────────
+    menuData.items.forEach((item, index) => {
+      if (!item || !item.name || item.price == null) {
+        console.warn(
+          `openUpdateOrderForm: Skipping malformed menu item at index ${index}`,
+          item,
+        );
+        return;
+      }
 
-      if (isChecked) selectedItems.add(item.name);
+      const card = document.createElement("div");
+      card.className = "food-card";
+      card.dataset.itemName = item.name;
+      card.dataset.itemPrice = item.price;
 
-      itemRow.innerHTML = `
-        <input type="checkbox" value="${item.name}" ${
-          isChecked ? "checked" : ""
-        } />
-        ${item.name} - ₱${item.price}
+      const isCurrentlySelected = currentItems.some((current) =>
+        current.includes(item.name),
+      );
+
+      if (isCurrentlySelected) {
+        // Parse existing quantity if format is "ItemName x2"
+        const match = currentItems.find((c) => c.includes(item.name));
+        const qtyMatch = match ? match.match(/x(\d+)/) : null;
+        const existingQty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+
+        card.classList.add("selected");
+        selectedItems.set(item.name, {
+          name: item.name,
+          price: item.price,
+          qty: existingQty,
+        });
+      }
+
+      card.innerHTML = `
+        <div class="food-card-check">✓</div>
+        <div class="food-name">${item.name}</div>
+        <div class="food-price">₱${parseFloat(item.price).toFixed(2)}</div>
+        <div class="qty-control" style="display: ${isCurrentlySelected ? "flex" : "none"};">
+          <button type="button" class="qty-btn qty-minus">−</button>
+          <input type="number" class="qty-input" min="1" max="99" value="${isCurrentlySelected ? selectedItems.get(item.name).qty : 1}" />
+          <button type="button" class="qty-btn qty-plus">+</button>
+        </div>
+        <div class="food-qty-display" style="display: ${isCurrentlySelected ? "block" : "none"};">
+          ${isCurrentlySelected ? selectedItems.get(item.name).qty + " item" : "0 item"}
+        </div>
       `;
 
-      itemRow.querySelector("input").addEventListener("change", (e) => {
-        if (e.target.checked) {
-          selectedItems.add(item.name);
-        } else {
-          selectedItems.delete(item.name);
+      const qtyControl = card.querySelector(".qty-control");
+      const qtyInput = card.querySelector(".qty-input");
+      const qtyDisplay = card.querySelector(".food-qty-display");
+      const minusBtn = card.querySelector(".qty-minus");
+      const plusBtn = card.querySelector(".qty-plus");
+
+      // Toggle card selection
+      card.addEventListener("click", (e) => {
+        if (e.target.classList.contains("qty-btn") || e.target === qtyInput) {
+          return;
         }
+
+        clearFieldError();
+        const isSelected = card.classList.contains("selected");
+
+        if (!isSelected) {
+          card.classList.add("selected");
+          qtyControl.style.display = "flex";
+          selectedItems.set(item.name, {
+            name: item.name,
+            price: item.price,
+            qty: 1,
+          });
+          qtyInput.value = 1;
+          updateSelectedDisplay();
+        } else {
+          card.classList.remove("selected");
+          qtyControl.style.display = "none";
+          selectedItems.delete(item.name);
+          updateSelectedDisplay();
+        }
+      });
+
+      // Quantity controls
+      minusBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const current = parseInt(qtyInput.value) || 1;
+        if (current <= 1) {
+          card.classList.remove("selected");
+          qtyControl.style.display = "none";
+          selectedItems.delete(item.name);
+          updateSelectedDisplay();
+        } else {
+          const newQty = current - 1;
+          qtyInput.value = newQty;
+          selectedItems.get(item.name).qty = newQty;
+          updateSelectedDisplay();
+        }
+      });
+
+      plusBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const current = parseInt(qtyInput.value) || 1;
+        if (current < 99) {
+          const newQty = current + 1;
+          qtyInput.value = newQty;
+          selectedItems.get(item.name).qty = newQty;
+          updateSelectedDisplay();
+        } else {
+          showFieldError(`⚠️ Max quantity (99) reached for "${item.name}".`);
+        }
+      });
+
+      qtyInput.addEventListener("change", (e) => {
+        e.stopPropagation();
+        let value = parseInt(qtyInput.value) || 1;
+        if (value < 1) value = 1;
+        if (value > 99) value = 99;
+        qtyInput.value = value;
+        selectedItems.get(item.name).qty = value;
         updateSelectedDisplay();
       });
 
-      dropdownMenu.appendChild(itemRow);
+      menuContainer.appendChild(card);
     });
 
+    // ── 5. Update summary display ──────────────────────────────────
     function updateSelectedDisplay() {
       if (selectedItems.size === 0) {
-        selectedDisplay.innerHTML = "<small>No items selected</small>";
+        selectedDisplay.classList.add("hidden");
       } else {
-        selectedDisplay.innerHTML =
-          "<strong>Selected:</strong> " + Array.from(selectedItems).join(", ");
+        selectedDisplay.classList.remove("hidden");
+        const entries = Array.from(selectedItems.values());
+        let totalAmount = 0;
+
+        selectedItemsList.innerHTML = entries
+          .map((e) => {
+            const itemTotal = e.price * e.qty;
+            totalAmount += itemTotal;
+            return `
+              <div class="selected-item">
+                <span class="selected-item-name">${e.name}</span>
+                <span class="selected-item-qty">x${e.qty}</span>
+                <span class="selected-item-price">₱${itemTotal.toFixed(2)}</span>
+              </div>
+            `;
+          })
+          .join("");
+
+        selectedTotalAmount.textContent = `₱${totalAmount.toFixed(2)}`;
+
+        menuContainer.querySelectorAll(".food-card").forEach((c) => {
+          const itemName = c.dataset.itemName;
+          if (selectedItems.has(itemName)) {
+            const entry = selectedItems.get(itemName);
+            const qtyDisplay = c.querySelector(".food-qty-display");
+            qtyDisplay.textContent = `${entry.qty} item${entry.qty > 1 ? "s" : ""}`;
+          }
+        });
       }
     }
 
+    // Initialize display
     updateSelectedDisplay();
 
     // Close modal
@@ -2334,32 +2466,34 @@ async function openUpdateOrderForm(bookingId, roomNumber, currentOrder) {
     wrapper
       .querySelector("#confirm-update")
       .addEventListener("click", async () => {
-        const food_order = Array.from(selectedItems).join(", ");
+        if (selectedItems.size === 0) {
+          showFieldError("⚠️ Please select at least one food item.");
+          return;
+        }
+
+        const food_order = Array.from(selectedItems.values())
+          .map((e) => `${e.name} x${e.qty}`)
+          .join(", ");
         const serve_time = wrapper.querySelector("#serve_time").value;
 
-        if (!food_order) return alert("Please select at least one food item.");
+        try {
+          await api("/rooms/update-order", {
+            method: "POST",
+            body: JSON.stringify({
+              bookingId: bookingId,
+              food_order,
+              serve_time,
+            }),
+          });
 
-        await api("/rooms/update-order", {
-          method: "POST",
-          body: JSON.stringify({
-            bookingId: bookingId,
-            food_order,
-            serve_time,
-          }),
-        });
-
-        wrapper.remove();
-        renderAdminDashboard();
+          wrapper.remove();
+          renderAdminDashboard();
+        } catch (err) {
+          showFieldError("❌ Failed to update order: " + err.message);
+        }
       });
-
-    // Optional: close dropdown when clicking outside
-    document.addEventListener("click", (e) => {
-      if (!wrapper.contains(e.target)) {
-        dropdownMenu.style.display = "none";
-      }
-    });
   } catch (err) {
-    alert("Error loading menu: " + err.message);
+    alert("❌ Error loading menu: " + err.message);
   }
 }
 
