@@ -1,56 +1,72 @@
+require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
 const path = require("path");
-const sqlite3 = require("sqlite3").verbose();
+const { Pool } = require("pg"); // ← changed from sqlite3
 const crypto = require("crypto");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DB_FILE = path.join(__dirname, "hotel.db");
 
-// app.use(cors());
-// app.use(bodyParser.json());
 app.use(cors());
 app.use(bodyParser.json({ limit: "50mb" }));
 app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-const db = new sqlite3.Database(DB_FILE);
+// ── PostgreSQL connection pool ────────────────────────────────────
+
+const db = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }, // required for Supabase
+});
+// const db = new Pool({
+//   host: process.env.DB_HOST,
+//   port: process.env.DB_PORT,
+//   database: process.env.DB_NAME,
+//   user: process.env.DB_USER,
+//   password: process.env.DB_PASSWORD,
+//   ssl:
+//     process.env.NODE_ENV === "production"
+//       ? { rejectUnauthorized: false }
+//       : false,
+// });
+
 const sessions = {};
 
-function runDb(query, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(query, params, function (err) {
-      if (err) reject(err);
-      else resolve(this);
-    });
-  });
+// ── Helper wrappers (same interface as before, now using pg) ──────
+async function runDb(query, params = []) {
+  // Converts SQLite ? placeholders to PostgreSQL $1, $2, ...
+  let i = 0;
+  const pgQuery = query.replace(/\?/g, () => `$${++i}`);
+  const result = await db.query(pgQuery, params);
+  // Mimic sqlite3's `this.lastID` via RETURNING
+  return {
+    lastID: result.rows[0]?.id ?? result.rows[0]?.expense_id ?? null,
+    changes: result.rowCount,
+  };
 }
 
-function allDb(query, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(query, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
+async function allDb(query, params = []) {
+  let i = 0;
+  const pgQuery = query.replace(/\?/g, () => `$${++i}`);
+  const result = await db.query(pgQuery, params);
+  return result.rows;
 }
 
-function getDb(query, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(query, params, (err, row) => {
-      if (err) reject(err);
-      else resolve(row);
-    });
-  });
+async function getDb(query, params = []) {
+  let i = 0;
+  const pgQuery = query.replace(/\?/g, () => `$${++i}`);
+  const result = await db.query(pgQuery, params);
+  return result.rows[0] || null;
 }
 
-function seedDatabase() {
-  db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+// ── Schema & seed (run once at startup) ──────────────────────────
+async function seedDatabase() {
+  try {
+    await db.query(`CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
       name TEXT,
       email TEXT UNIQUE,
       password TEXT,
@@ -58,8 +74,8 @@ function seedDatabase() {
       department TEXT
     )`);
 
-    db.run(`CREATE TABLE IF NOT EXISTS rooms (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await db.query(`CREATE TABLE IF NOT EXISTS rooms (
+      id SERIAL PRIMARY KEY,
       number TEXT UNIQUE,
       type TEXT,
       rate REAL,
@@ -67,8 +83,8 @@ function seedDatabase() {
       housekeeping_status TEXT
     )`);
 
-    db.run(`CREATE TABLE IF NOT EXISTS bookings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await db.query(`CREATE TABLE IF NOT EXISTS bookings (
+      id SERIAL PRIMARY KEY,
       room_id INTEGER,
       guest_name TEXT,
       contact TEXT,
@@ -79,17 +95,12 @@ function seedDatabase() {
       updated INTEGER DEFAULT 0,
       created_at TEXT,
       checked_out INTEGER DEFAULT 0,
+      id_filename TEXT,
       FOREIGN KEY(room_id) REFERENCES rooms(id)
     )`);
 
-    db.run(`ALTER TABLE bookings ADD COLUMN id_filename TEXT`, (err) => {
-      if (err && !err.message.includes("duplicate column")) {
-        console.error("ALTER TABLE bookings error:", err.message);
-      }
-    });
-
-    db.run(`CREATE TABLE IF NOT EXISTS orders (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await db.query(`CREATE TABLE IF NOT EXISTS orders (
+      id SERIAL PRIMARY KEY,
       booking_id INTEGER,
       room_number TEXT,
       food_order TEXT,
@@ -101,8 +112,8 @@ function seedDatabase() {
       FOREIGN KEY(booking_id) REFERENCES bookings(id)
     )`);
 
-    db.run(`CREATE TABLE IF NOT EXISTS receipts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await db.query(`CREATE TABLE IF NOT EXISTS receipts (
+      id SERIAL PRIMARY KEY,
       booking_id INTEGER,
       room_number TEXT,
       guest_name TEXT,
@@ -110,17 +121,12 @@ function seedDatabase() {
       food_amount REAL,
       total REAL,
       created_at TEXT,
+      receipt_number TEXT,
       FOREIGN KEY(booking_id) REFERENCES bookings(id)
     )`);
 
-    db.run(`ALTER TABLE receipts ADD COLUMN receipt_number TEXT`, (err) => {
-      if (err && !err.message.includes("duplicate column")) {
-        console.error("ALTER TABLE receipts error:", err.message);
-      }
-    });
-
-    db.run(`CREATE TABLE IF NOT EXISTS ledger (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await db.query(`CREATE TABLE IF NOT EXISTS ledger (
+      id SERIAL PRIMARY KEY,
       booking_id INTEGER,
       description TEXT,
       amount REAL,
@@ -130,37 +136,33 @@ function seedDatabase() {
       created_at TEXT
     )`);
 
-    db.run(`CREATE TABLE IF NOT EXISTS housekeeping_tasks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await db.query(`CREATE TABLE IF NOT EXISTS housekeeping_tasks (
+      id SERIAL PRIMARY KEY,
       room_number TEXT,
       status TEXT,
       created_at TEXT
     )`);
 
-    db.run(`CREATE TABLE IF NOT EXISTS menu (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await db.query(`CREATE TABLE IF NOT EXISTS menu (
+      id SERIAL PRIMARY KEY,
       name TEXT,
       price REAL
     )`);
 
-    // =========================================
-    // EXPENSE MANAGEMENT TABLES
-    // =========================================
-
-    db.run(`CREATE TABLE IF NOT EXISTS expense_categories (
-      category_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await db.query(`CREATE TABLE IF NOT EXISTS expense_categories (
+      category_id SERIAL PRIMARY KEY,
       category_name TEXT NOT NULL
     )`);
 
-    db.run(`CREATE TABLE IF NOT EXISTS inventory_items (
-      item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await db.query(`CREATE TABLE IF NOT EXISTS inventory_items (
+      item_id SERIAL PRIMARY KEY,
       item_name TEXT NOT NULL,
       stock_quantity INTEGER NOT NULL DEFAULT 0,
       unit_price REAL NOT NULL
     )`);
 
-    db.run(`CREATE TABLE IF NOT EXISTS expenses (
-      expense_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await db.query(`CREATE TABLE IF NOT EXISTS expenses (
+      expense_id SERIAL PRIMARY KEY,
       category_id INTEGER NOT NULL,
       expense_name TEXT NOT NULL,
       description TEXT,
@@ -173,8 +175,8 @@ function seedDatabase() {
       FOREIGN KEY (category_id) REFERENCES expense_categories(category_id)
     )`);
 
-    db.run(`CREATE TABLE IF NOT EXISTS inventory_expense_details (
-      inventory_detail_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await db.query(`CREATE TABLE IF NOT EXISTS inventory_expense_details (
+      inventory_detail_id SERIAL PRIMARY KEY,
       expense_id INTEGER NOT NULL,
       item_id INTEGER NOT NULL,
       quantity INTEGER NOT NULL,
@@ -184,8 +186,8 @@ function seedDatabase() {
       FOREIGN KEY (item_id) REFERENCES inventory_items(item_id)
     )`);
 
-    db.run(`CREATE TABLE IF NOT EXISTS operating_expense_details (
-      operating_detail_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await db.query(`CREATE TABLE IF NOT EXISTS operating_expense_details (
+      operating_detail_id SERIAL PRIMARY KEY,
       expense_id INTEGER NOT NULL,
       bill_type TEXT,
       billing_period TEXT,
@@ -193,95 +195,63 @@ function seedDatabase() {
       FOREIGN KEY (expense_id) REFERENCES expenses(expense_id)
     )`);
 
-    db.get("SELECT COUNT(*) AS count FROM expense_categories", (err, row) => {
-      if (err) {
-        console.error("Seed expense_categories error:", err);
-        return;
-      }
-      if (row.count === 0) {
-        const categories = [["Inventory Expense"], ["Operating Expense"]];
-        const stmt = db.prepare(
-          "INSERT INTO expense_categories (category_name) VALUES (?)",
-        );
-        for (const category of categories) stmt.run(category);
-        stmt.finalize();
-      }
-    });
+    // Seed expense categories
+    const catCount = await getDb(
+      "SELECT COUNT(*) AS count FROM expense_categories",
+    );
+    if (parseInt(catCount.count) === 0) {
+      await db.query(
+        `INSERT INTO expense_categories (category_name) VALUES ('Inventory Expense'), ('Operating Expense')`,
+      );
+    }
 
-    db.get("SELECT COUNT(*) AS count FROM users", (err, row) => {
-      if (err) throw err;
-      if (row.count === 0) {
-        const users = [
-          [
-            "Admin Front Desk",
-            "admin@hotel.com",
-            "password",
-            "admin",
-            "Front Desk",
-          ],
-          [
-            "Food & Beverage",
-            "food@hotel.com",
-            "password",
-            "food-beverage",
-            "Food & Beverage",
-          ],
-          [
-            "Accounting",
-            "accounting@hotel.com",
-            "password",
-            "accounting",
-            "Accounting",
-          ],
-          [
-            "Housekeeping",
-            "housekeeping@hotel.com",
-            "password",
-            "housekeeping",
-            "Housekeeping",
-          ],
-        ];
-        const stmt = db.prepare(
-          "INSERT INTO users (name, email, password, role, department) VALUES (?, ?, ?, ?, ?)",
-        );
-        for (const user of users) stmt.run(user);
-        stmt.finalize();
-      }
-    });
+    // Seed users
+    const userCount = await getDb("SELECT COUNT(*) AS count FROM users");
+    if (parseInt(userCount.count) === 0) {
+      await db.query(`INSERT INTO users (name, email, password, role, department) VALUES
+        ('Admin Front Desk', 'admin@hotel.com', 'password', 'admin', 'Front Desk'),
+        ('Food & Beverage', 'food@hotel.com', 'password', 'food-beverage', 'Food & Beverage'),
+        ('Accounting', 'accounting@hotel.com', 'password', 'accounting', 'Accounting'),
+        ('Housekeeping', 'housekeeping@hotel.com', 'password', 'housekeeping', 'Housekeeping')`);
+    }
 
-    db.get("SELECT COUNT(*) AS count FROM rooms", (err, row) => {
-      if (err) throw err;
-      if (row.count === 0) {
-        const rooms = [
-          ["101", "STANDARD MATRIMONIAL", 1200, "available", "Ready"],
-          ["102", "TWIN MATRIMONIAL", 1500, "available", "Ready"],
-          ["103", "DELUXE TWIN MATRIMONIAL", 2100, "available", "Ready"],
-          ["104", "2 EXTRA MATTRESS", 300, "available", "Ready"],
-          ["105", "STANDARD MATRIMONIAL", 1500, "available", "Ready"],
-          ["106", "TWIN MATRIMONIAL", 1800, "available", "Ready"],
-          ["107", "DELUXE ROOM", 2100, "available", "Ready"],
-          ["108", "2 EXTRA MATTRESSES", 1500, "available", "Ready"],
-        ];
-        const stmt = db.prepare(
-          "INSERT INTO rooms (number, type, rate, status, housekeeping_status) VALUES (?, ?, ?, ?, ?)",
-        );
-        for (const room of rooms) stmt.run(room);
-        stmt.finalize();
-      }
-    });
+    // Seed rooms
+    const roomCount = await getDb("SELECT COUNT(*) AS count FROM rooms");
+    if (parseInt(roomCount.count) === 0) {
+      await db.query(`INSERT INTO rooms (number, type, rate, status, housekeeping_status) VALUES
+        ('101', 'STANDARD MATRIMONIAL', 1200, 'available', 'Ready'),
+        ('102', 'TWIN MATRIMONIAL', 1500, 'available', 'Ready'),
+        ('103', 'DELUXE TWIN MATRIMONIAL', 2100, 'available', 'Ready'),
+        ('104', '2 EXTRA MATTRESS', 300, 'available', 'Ready'),
+        ('105', 'STANDARD MATRIMONIAL', 1500, 'available', 'Ready'),
+        ('106', 'TWIN MATRIMONIAL', 1800, 'available', 'Ready'),
+        ('107', 'DELUXE ROOM', 2100, 'available', 'Ready'),
+        ('108', '2 EXTRA MATTRESSES', 1500, 'available', 'Ready')`);
+    }
 
-    db.get("SELECT COUNT(*) AS count FROM menu", (err, row) => {
-      if (err) throw err;
-      if (row.count === 0) {
-        const menuItems = [["Grilled Chicken", 250]];
-        const stmt = db.prepare("INSERT INTO menu (name, price) VALUES (?, ?)");
-        for (const item of menuItems) stmt.run(item);
-        stmt.finalize();
-      }
-    });
-  });
+    // Seed menu
+    const menuCount = await getDb("SELECT COUNT(*) AS count FROM menu");
+    if (parseInt(menuCount.count) === 0) {
+      await db.query(
+        `INSERT INTO menu (name, price) VALUES ('Grilled Chicken', 250)`,
+      );
+    }
+
+    console.log("✅ Database seeded successfully.");
+  } catch (err) {
+    console.error("❌ Seed error:", err.message);
+  }
 }
 
+// ── Queries that used SQLite date functions → PostgreSQL equivalents ──
+// SQLite: datetime('now')        → PostgreSQL: NOW() or to_char(NOW(), ...)
+// SQLite: DATE('now', '-7 days') → PostgreSQL: CURRENT_DATE - INTERVAL '7 days'
+// SQLite: strftime('%Y-%m', col) → PostgreSQL: to_char(col::timestamp, 'YYYY-MM')
+// SQLite: DATE(col)              → PostgreSQL: col::date  or  DATE(col::timestamp)
+// NOTE: All created_at values are stored as TEXT (ISO strings) in your schema.
+//       Casting with ::timestamp handles this in PostgreSQL.
+
+// ── Auth middleware ───────────────────────────────────────────────
 function requireAuth(req, res, next) {
   const token = req.headers["x-session-token"];
   if (!token || !sessions[token]) {
@@ -290,6 +260,8 @@ function requireAuth(req, res, next) {
   req.user = sessions[token];
   next();
 }
+
+// ── Routes (unchanged logic, date functions updated) ──────────────
 
 app.post("/api/login", async (req, res) => {
   const { email, password } = req.body;
@@ -321,6 +293,7 @@ app.get("/api/menu", requireAuth, async (req, res) => {
     res.status(500).json({ error: "Unable to load menu." });
   }
 });
+
 app.delete("/api/menu/:id", requireAuth, async (req, res) => {
   try {
     await runDb("DELETE FROM menu WHERE id = ?", [req.params.id]);
@@ -332,14 +305,12 @@ app.delete("/api/menu/:id", requireAuth, async (req, res) => {
 
 app.put("/api/menu/:id", requireAuth, async (req, res) => {
   const { name, price } = req.body;
-
   try {
     await runDb("UPDATE menu SET name = ?, price = ? WHERE id = ?", [
       name,
       price,
       req.params.id,
     ]);
-
     res.json({ message: "Menu updated." });
   } catch (err) {
     res.status(500).json({ error: "Update failed." });
@@ -348,10 +319,8 @@ app.put("/api/menu/:id", requireAuth, async (req, res) => {
 
 app.post("/api/menu", requireAuth, async (req, res) => {
   const { name, price } = req.body;
-
   if (!name || !price)
     return res.status(400).json({ error: "Name and price required." });
-
   try {
     await runDb("INSERT INTO menu (name, price) VALUES (?, ?)", [name, price]);
     res.json({ message: "Menu item added." });
@@ -380,22 +349,25 @@ app.get("/api/rooms/available", requireAuth, async (req, res) => {
 });
 
 app.get("/api/rooms/occupied", requireAuth, async (req, res) => {
-  const bookings =
-    await allDb(`SELECT b.id, r.number AS room_number, r.rate, b.guest_name, b.contact, b.checkin_datetime, b.food_order, b.serve_time, b.updated, b.status
-    FROM bookings b
-    JOIN rooms r ON b.room_id = r.id
-    WHERE b.status = 'occupied' AND b.checked_out = 0
-    ORDER BY r.number`);
+  const bookings = await allDb(
+    `SELECT b.id, r.number AS room_number, r.rate, b.guest_name, b.contact, b.checkin_datetime,
+            b.food_order, b.serve_time, b.updated, b.status
+     FROM bookings b
+     JOIN rooms r ON b.room_id = r.id
+     WHERE b.status = 'occupied' AND b.checked_out = 0
+     ORDER BY r.number`,
+  );
   res.json({ bookings });
 });
 
 app.get("/api/rooms/food-orders", requireAuth, async (req, res) => {
-  const orders =
-    await allDb(`SELECT o.id, o.room_number, o.food_order, o.serve_time, o.status, o.updated, b.guest_name
-    FROM orders o
-    LEFT JOIN bookings b ON o.booking_id = b.id
-    WHERE o.status != 'delivered'
-    ORDER BY o.room_number`);
+  const orders = await allDb(
+    `SELECT o.id, o.room_number, o.food_order, o.serve_time, o.status, o.updated, b.guest_name
+     FROM orders o
+     LEFT JOIN bookings b ON o.booking_id = b.id
+     WHERE o.status != 'delivered'
+     ORDER BY o.room_number`,
+  );
   res.json({ orders });
 });
 
@@ -416,13 +388,17 @@ app.post("/api/rooms/book", requireAuth, async (req, res) => {
       roomId,
     ]);
     if (!room) return res.status(404).json({ error: "Room not found." });
+
     await runDb("UPDATE rooms SET status = ? WHERE id = ?", [
       "occupied",
       roomId,
     ]);
-    const booking = await runDb(
+
+    // Use RETURNING id to get lastID in PostgreSQL
+    let i = 0;
+    const bookingResult = await db.query(
       `INSERT INTO bookings (room_id, guest_name, contact, checkin_datetime, food_order, serve_time, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'occupied', datetime('now'))`,
+       VALUES ($1,$2,$3,$4,$5,$6,'occupied',NOW()::text) RETURNING id`,
       [
         roomId,
         guest_name,
@@ -432,26 +408,24 @@ app.post("/api/rooms/book", requireAuth, async (req, res) => {
         serve_time || "",
       ],
     );
-    const bookingId = booking.lastID;
+    const bookingId = bookingResult.rows[0].id;
+
     if (food_order) {
-      await runDb(
-        `INSERT INTO orders (booking_id, room_number, food_order, serve_time, status, created_at) VALUES (?, ?, ?, ?, 'pending', datetime('now'))`,
+      await db.query(
+        `INSERT INTO orders (booking_id, room_number, food_order, serve_time, status, created_at)
+         VALUES ($1,$2,$3,$4,'pending',NOW()::text)`,
         [bookingId, room.number, food_order, serve_time || ""],
       );
     }
 
+    // Save valid ID file
     if (req.body.valid_id && req.body.valid_id.data) {
       try {
         const fs = require("fs");
-        const path = require("path");
-
-        // Create uploads directory if it doesn't exist
         const uploadsDir = path.join(__dirname, "uploads", "ids");
-        if (!fs.existsSync(uploadsDir)) {
+        if (!fs.existsSync(uploadsDir))
           fs.mkdirSync(uploadsDir, { recursive: true });
-        }
 
-        // Generate unique filename
         const idData = req.body.valid_id;
         const ext =
           idData.type === "application/pdf"
@@ -459,32 +433,22 @@ app.post("/api/rooms/book", requireAuth, async (req, res) => {
             : idData.filename.split(".").pop();
         const filename = `booking_${bookingId}_${Date.now()}.${ext}`;
         const filepath = path.join(uploadsDir, filename);
-
-        // Decode base64 and save file
-        const buffer = Buffer.from(idData.data, "base64");
-        fs.writeFileSync(filepath, buffer);
-
-        // Save filename to bookings table
+        fs.writeFileSync(filepath, Buffer.from(idData.data, "base64"));
         await runDb("UPDATE bookings SET id_filename = ? WHERE id = ?", [
           filename,
           bookingId,
         ]);
-
         console.log(`✅ ID file saved: ${filename}`);
       } catch (fileErr) {
         console.error("⚠️ Failed to save ID file:", fileErr.message);
-        // Don't fail the booking if file save fails
       }
     }
 
-    // ── NEW: Record ledger charge entry ──────────────────────────
-    // ── NEW: Record ledger charge + optional initial payment ──────
+    // Ledger entries
     try {
       const chargeDescription = food_order ? "Room + Food" : "Room Only";
-      console.log("📦 Full req.body:", req.body);
-      console.log("💰 initial_payment value:", req.body.initial_payment);
-
       let foodAmount = 0;
+
       if (food_order) {
         const items = food_order.split(",");
         for (let item of items) {
@@ -503,25 +467,21 @@ app.post("/api/rooms/book", requireAuth, async (req, res) => {
       }
 
       const chargeAmount = room.rate + foodAmount;
-
-      // Insert charge entry
-      await runDb(
+      await db.query(
         `INSERT INTO ledger (booking_id, description, amount, type, guest_name, room_number, created_at)
-     VALUES (?, ?, ?, 'charge', ?, ?, datetime('now'))`,
+         VALUES ($1,$2,$3,'charge',$4,$5,NOW()::text)`,
         [bookingId, chargeDescription, chargeAmount, guest_name, room.number],
       );
 
-      // If initial payment was provided, insert credit entry too
       const initial_payment = parseFloat(req.body.initial_payment) || 0;
       if (initial_payment > 0) {
         const isFullPayment = initial_payment >= chargeAmount;
         const paymentDescription = isFullPayment
           ? "Payment"
           : "Partial Payment";
-
-        await runDb(
+        await db.query(
           `INSERT INTO ledger (booking_id, description, amount, type, guest_name, room_number, created_at)
-       VALUES (?, ?, ?, 'credit', ?, ?, datetime('now'))`,
+           VALUES ($1,$2,$3,'credit',$4,$5,NOW()::text)`,
           [
             bookingId,
             paymentDescription,
@@ -537,8 +497,6 @@ app.post("/api/rooms/book", requireAuth, async (req, res) => {
         ledgerErr,
       );
     }
-    // ─────────────────────────────────────────────────────────────
-    // ─────────────────────────────────────────────────────────────
 
     res.json({ message: "Room confirmed successfully." });
   } catch (err) {
@@ -559,15 +517,18 @@ app.post("/api/rooms/update-order", requireAuth, async (req, res) => {
       [bookingId],
     );
     if (!booking) return res.status(404).json({ error: "Booking not found." });
+
     await runDb(
       "UPDATE bookings SET food_order = ?, serve_time = ?, updated = 1 WHERE id = ?",
       [food_order, serve_time || "", bookingId],
     );
+
     const room = await getDb("SELECT number FROM rooms WHERE id = ?", [
       booking.room_id,
     ]);
-    await runDb(
-      `INSERT INTO orders (booking_id, room_number, food_order, serve_time, status, updated, created_at) VALUES (?, ?, ?, ?, 'pending', 1, datetime('now'))`,
+    await db.query(
+      `INSERT INTO orders (booking_id, room_number, food_order, serve_time, status, updated, created_at)
+       VALUES ($1,$2,$3,$4,'pending',1,NOW()::text)`,
       [bookingId, room.number, food_order, serve_time || ""],
     );
     res.json({ message: "Food order updated." });
@@ -577,12 +538,14 @@ app.post("/api/rooms/update-order", requireAuth, async (req, res) => {
 });
 
 app.get("/api/billing/occupied", requireAuth, async (req, res) => {
-  const bookings =
-    await allDb(`SELECT b.id, r.number AS room_number, r.rate, b.guest_name, b.contact, b.checkin_datetime, b.food_order, b.serve_time
-    FROM bookings b
-    JOIN rooms r ON b.room_id = r.id
-    WHERE b.checked_out = 0 AND b.status = 'occupied'
-    ORDER BY r.number`);
+  const bookings = await allDb(
+    `SELECT b.id, r.number AS room_number, r.rate, b.guest_name, b.contact,
+            b.checkin_datetime, b.food_order, b.serve_time
+     FROM bookings b
+     JOIN rooms r ON b.room_id = r.id
+     WHERE b.checked_out = 0 AND b.status = 'occupied'
+     ORDER BY r.number`,
+  );
   res.json({ bookings });
 });
 
@@ -592,44 +555,33 @@ app.post("/api/billing/checkout", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "Booking id is required." });
   try {
     const booking = await getDb(
-      `SELECT b.id, b.room_id, b.food_order, b.serve_time, r.number AS room_number, r.rate, b.guest_name
-      FROM bookings b JOIN rooms r ON b.room_id = r.id WHERE b.id = ?`,
+      `SELECT b.id, b.room_id, b.food_order, b.serve_time, r.number AS room_number,
+              r.rate, b.guest_name
+       FROM bookings b JOIN rooms r ON b.room_id = r.id WHERE b.id = ?`,
       [bookingId],
     );
     if (!booking) return res.status(404).json({ error: "Booking not found." });
+
     let foodAmount = 0;
     let foodBreakdown = [];
-
     if (booking.food_order) {
       const items = booking.food_order.split(",");
-
       for (let item of items) {
         item = item.trim();
-
-        // Example: "Chicken Joy x2"
         let [name, qty] = item.split("x");
-
         name = name.trim();
         qty = qty ? parseInt(qty.trim()) : 1;
-
-        // Get price from menu table
         const menuItem = await getDb("SELECT price FROM menu WHERE name = ?", [
           name,
         ]);
-
         if (menuItem) {
           const total = menuItem.price * qty;
           foodAmount += total;
-
-          foodBreakdown.push({
-            name,
-            qty,
-            price: menuItem.price,
-            total,
-          });
+          foodBreakdown.push({ name, qty, price: menuItem.price, total });
         }
       }
     }
+
     const total = booking.rate + foodAmount;
     await runDb("UPDATE bookings SET checked_out = 1 WHERE id = ?", [
       bookingId,
@@ -639,18 +591,20 @@ app.post("/api/billing/checkout", requireAuth, async (req, res) => {
       ["available", "Needs Cleaning", booking.room_id],
     );
 
+    // Generate receipt number
     const lastReceipt = await getDb(
       `SELECT receipt_number FROM receipts ORDER BY id DESC LIMIT 1`,
     );
     let nextNumber = 1;
-    if (lastReceipt && lastReceipt.receipt_number) {
+    if (lastReceipt?.receipt_number) {
       const lastNum = parseInt(lastReceipt.receipt_number.replace("REC-", ""));
       if (!isNaN(lastNum)) nextNumber = lastNum + 1;
     }
     const receipt_number = `REC-${String(nextNumber).padStart(4, "0")}`;
-    await runDb(
+
+    await db.query(
       `INSERT INTO receipts (receipt_number, booking_id, room_number, guest_name, room_rate, food_amount, total, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NOW()::text)`,
       [
         receipt_number,
         booking.id,
@@ -661,22 +615,12 @@ app.post("/api/billing/checkout", requireAuth, async (req, res) => {
         total,
       ],
     );
-    // await runDb(
-    //   `INSERT INTO ledger (description, amount, type, guest_name, room_number, created_at)
-    //   VALUES (?, ?, 'credit', ?, ?, datetime('now'))`,
-    //   [
-    //     `Checkout for room ${booking.room_number}`,
-    //     total,
-    //     booking.guest_name,
-    //     booking.room_number,
-    //   ],
-    // );
-    await runDb(
-      `INSERT INTO housekeeping_tasks (room_number, status, created_at) VALUES (?, 'needs-cleaning', datetime('now'))`,
+
+    await db.query(
+      `INSERT INTO housekeeping_tasks (room_number, status, created_at) VALUES ($1,'needs-cleaning',NOW()::text)`,
       [booking.room_number],
     );
 
-    // Get payment history for this booking
     const payments = await allDb(
       `SELECT description, amount FROM ledger WHERE booking_id = ? AND type = 'credit' ORDER BY created_at ASC`,
       [bookingId],
@@ -705,11 +649,12 @@ app.post("/api/billing/checkout", requireAuth, async (req, res) => {
 });
 
 app.get("/api/orders", requireAuth, async (req, res) => {
-  const orders =
-    await allDb(`SELECT o.id, o.room_number, o.food_order, o.serve_time, o.status, o.updated, o.created_at, b.guest_name
-    FROM orders o
-    LEFT JOIN bookings b ON o.booking_id = b.id
-    ORDER BY o.created_at DESC`);
+  const orders = await allDb(
+    `SELECT o.id, o.room_number, o.food_order, o.serve_time, o.status, o.updated, o.created_at, b.guest_name
+     FROM orders o
+     LEFT JOIN bookings b ON o.booking_id = b.id
+     ORDER BY o.created_at DESC`,
+  );
   res.json({ orders });
 });
 
@@ -718,7 +663,7 @@ app.post("/api/orders/deliver", requireAuth, async (req, res) => {
   if (!orderId) return res.status(400).json({ error: "Order id is required." });
   try {
     await runDb(
-      "UPDATE orders SET status = ?, delivered_at = datetime('now') WHERE id = ?",
+      "UPDATE orders SET status = ?, delivered_at = NOW()::text WHERE id = ?",
       ["delivered", orderId],
     );
     res.json({ message: "Order marked delivered." });
@@ -736,31 +681,24 @@ app.get("/api/receipts", requireAuth, async (req, res) => {
 
 app.post("/api/ledger/payment", requireAuth, async (req, res) => {
   const { bookingId, amount, guest_name, room_number } = req.body;
-
   if (!bookingId || !amount || !guest_name || !room_number) {
     return res.status(400).json({ error: "Missing payment information." });
   }
-
   try {
-    // Get total charged for this booking
     const chargeRow = await getDb(
       `SELECT SUM(amount) AS total FROM ledger WHERE booking_id = ? AND type = 'charge'`,
       [bookingId],
     );
-    // Get total already paid for this booking
     const paidRow = await getDb(
       `SELECT SUM(amount) AS total FROM ledger WHERE booking_id = ? AND type = 'credit'`,
       [bookingId],
     );
-
     const totalCharged = chargeRow?.total || 0;
     const totalPaid = (paidRow?.total || 0) + parseFloat(amount);
     const remaining = totalCharged - totalPaid;
 
-    // Determine description
     let description;
     if (remaining <= 0) {
-      // Check if there was a previous partial payment
       const prevPayment = await getDb(
         `SELECT id FROM ledger WHERE booking_id = ? AND type = 'credit'`,
         [bookingId],
@@ -770,9 +708,9 @@ app.post("/api/ledger/payment", requireAuth, async (req, res) => {
       description = "Partial Payment";
     }
 
-    await runDb(
+    await db.query(
       `INSERT INTO ledger (booking_id, description, amount, type, guest_name, room_number, created_at)
-       VALUES (?, ?, ?, 'credit', ?, ?, datetime('now'))`,
+       VALUES ($1,$2,$3,'credit',$4,$5,NOW()::text)`,
       [bookingId, description, parseFloat(amount), guest_name, room_number],
     );
 
@@ -787,19 +725,13 @@ app.post("/api/ledger/payment", requireAuth, async (req, res) => {
   }
 });
 
-// app.get("/api/ledger", requireAuth, async (req, res) => {
-//   const ledger = await allDb(
-//     "SELECT id, description, guest_name,  amount, type, room_number, created_at FROM ledger ORDER BY created_at DESC",
-//   );
-//   res.json({ ledger });
-// });
-
 app.get("/api/ledger", requireAuth, async (req, res) => {
   try {
+    // PostgreSQL: to_char(created_at::timestamp, 'YYYY-MM') replaces strftime('%Y-%m', created_at)
     const ledger = await allDb(
       `SELECT id, booking_id, description, guest_name, amount, type, room_number, created_at
        FROM ledger
-       WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')
+       WHERE to_char(created_at::timestamp, 'YYYY-MM') = to_char(NOW(), 'YYYY-MM')
        ORDER BY created_at ASC`,
     );
     res.json({ ledger });
@@ -841,7 +773,6 @@ app.post("/api/housekeeping/ready", requireAuth, async (req, res) => {
 app.get("/api/ledger/balance/:bookingId", requireAuth, async (req, res) => {
   try {
     const { bookingId } = req.params;
-
     const chargeRow = await getDb(
       `SELECT COALESCE(SUM(amount), 0) AS total FROM ledger WHERE booking_id = ? AND type = 'charge'`,
       [bookingId],
@@ -850,19 +781,17 @@ app.get("/api/ledger/balance/:bookingId", requireAuth, async (req, res) => {
       `SELECT COALESCE(SUM(amount), 0) AS total FROM ledger WHERE booking_id = ? AND type = 'credit'`,
       [bookingId],
     );
-
     const totalCharged = chargeRow?.total || 0;
     const totalPaid = creditRow?.total || 0;
     const remaining = Math.max(0, totalCharged - totalPaid);
-
     res.json({ totalCharged, totalPaid, remaining });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch balance." });
   }
 });
 
-// ── EXPENSE MANAGEMENT ROUTES ────────────────────────────────────
-// Expense Categories
+// ── Expense Management ────────────────────────────────────────────
+
 app.get("/api/expense-categories", requireAuth, async (req, res) => {
   try {
     const categories = await allDb(
@@ -874,7 +803,6 @@ app.get("/api/expense-categories", requireAuth, async (req, res) => {
   }
 });
 
-// Inventory Items - GET
 app.get("/api/inventory-items", requireAuth, async (req, res) => {
   try {
     const items = await allDb(
@@ -886,7 +814,6 @@ app.get("/api/inventory-items", requireAuth, async (req, res) => {
   }
 });
 
-// Inventory Items - POST
 app.post("/api/inventory-items", requireAuth, async (req, res) => {
   const { item_name, stock_quantity, unit_price } = req.body;
   if (!item_name || stock_quantity === undefined || !unit_price) {
@@ -905,7 +832,6 @@ app.post("/api/inventory-items", requireAuth, async (req, res) => {
   }
 });
 
-// Inventory Items - PUT
 app.put("/api/inventory-items/:id", requireAuth, async (req, res) => {
   const { item_name, stock_quantity, unit_price } = req.body;
   if (!item_name || stock_quantity === undefined || !unit_price) {
@@ -924,7 +850,6 @@ app.put("/api/inventory-items/:id", requireAuth, async (req, res) => {
   }
 });
 
-// Inventory Items - DELETE
 app.delete("/api/inventory-items/:id", requireAuth, async (req, res) => {
   try {
     await runDb("DELETE FROM inventory_items WHERE item_id = ?", [
@@ -936,12 +861,11 @@ app.delete("/api/inventory-items/:id", requireAuth, async (req, res) => {
   }
 });
 
-// Expenses - GET ALL
 app.get("/api/expenses", requireAuth, async (req, res) => {
   try {
     const expenses = await allDb(
-      `SELECT e.expense_id, e.category_id, c.category_name, e.expense_name, 
-              e.description, e.amount, e.expense_date, e.payment_method, e.status, 
+      `SELECT e.expense_id, e.category_id, c.category_name, e.expense_name,
+              e.description, e.amount, e.expense_date, e.payment_method, e.status,
               e.created_at, e.updated_at
        FROM expenses e
        LEFT JOIN expense_categories c ON e.category_id = c.category_id
@@ -953,15 +877,14 @@ app.get("/api/expenses", requireAuth, async (req, res) => {
   }
 });
 
-// Daily expense summary
 app.get("/api/expenses/summary/daily", requireAuth, async (req, res) => {
   try {
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const today = new Date().toISOString().slice(0, 10);
     const rows = await allDb(
       `SELECT c.category_name, SUM(e.amount) as total
        FROM expenses e
        LEFT JOIN expense_categories c ON e.category_id = c.category_id
-       WHERE DATE(e.expense_date) = ?
+       WHERE DATE(e.expense_date::timestamp) = $1
        GROUP BY c.category_name`,
       [today],
     );
@@ -979,14 +902,13 @@ app.get("/api/expenses/summary/daily", requireAuth, async (req, res) => {
   }
 });
 
-// Weekly expense summary (last 7 days)
 app.get("/api/expenses/summary/weekly", requireAuth, async (req, res) => {
   try {
     const rows = await allDb(
       `SELECT c.category_name, SUM(e.amount) as total
        FROM expenses e
        LEFT JOIN expense_categories c ON e.category_id = c.category_id
-       WHERE DATE(e.expense_date) >= DATE('now', '-7 days')
+       WHERE DATE(e.expense_date::timestamp) >= CURRENT_DATE - INTERVAL '7 days'
        GROUP BY c.category_name`,
     );
     const inventory =
@@ -1003,14 +925,13 @@ app.get("/api/expenses/summary/weekly", requireAuth, async (req, res) => {
   }
 });
 
-// Monthly expense summary (current month)
 app.get("/api/expenses/summary/monthly", requireAuth, async (req, res) => {
   try {
     const rows = await allDb(
       `SELECT c.category_name, SUM(e.amount) as total
        FROM expenses e
        LEFT JOIN expense_categories c ON e.category_id = c.category_id
-       WHERE strftime('%Y-%m', e.expense_date) = strftime('%Y-%m', 'now')
+       WHERE to_char(e.expense_date::timestamp, 'YYYY-MM') = to_char(NOW(), 'YYYY-MM')
        GROUP BY c.category_name`,
     );
     const inventory =
@@ -1027,7 +948,6 @@ app.get("/api/expenses/summary/monthly", requireAuth, async (req, res) => {
   }
 });
 
-// Expense summary for a specific month (YYYY-MM)
 app.get("/api/expenses/summary/by-month", requireAuth, async (req, res) => {
   const month = req.query.month;
   if (!month)
@@ -1037,7 +957,7 @@ app.get("/api/expenses/summary/by-month", requireAuth, async (req, res) => {
       `SELECT c.category_name, SUM(e.amount) as total
        FROM expenses e
        LEFT JOIN expense_categories c ON e.category_id = c.category_id
-       WHERE strftime('%Y-%m', e.expense_date) = ?
+       WHERE to_char(e.expense_date::timestamp, 'YYYY-MM') = $1
        GROUP BY c.category_name`,
       [month],
     );
@@ -1053,7 +973,6 @@ app.get("/api/expenses/summary/by-month", requireAuth, async (req, res) => {
   }
 });
 
-// Expenses - GET by ID
 app.get("/api/expenses/:id", requireAuth, async (req, res) => {
   try {
     const expense = await getDb(
@@ -1062,16 +981,13 @@ app.get("/api/expenses/:id", requireAuth, async (req, res) => {
        WHERE e.expense_id = ?`,
       [req.params.id],
     );
-    if (!expense) {
-      return res.status(404).json({ error: "Expense not found." });
-    }
+    if (!expense) return res.status(404).json({ error: "Expense not found." });
     res.json({ expense });
   } catch (err) {
     res.status(500).json({ error: "Unable to load expense." });
   }
 });
 
-// Expenses - POST (CREATE)
 app.post("/api/expenses", requireAuth, async (req, res) => {
   const {
     category_id,
@@ -1089,9 +1005,9 @@ app.post("/api/expenses", requireAuth, async (req, res) => {
   }
   try {
     const now = new Date().toISOString();
-    const result = await runDb(
+    const result = await db.query(
       `INSERT INTO expenses (category_id, expense_name, description, amount, expense_date, payment_method, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING expense_id`,
       [
         category_id,
         expense_name,
@@ -1106,14 +1022,13 @@ app.post("/api/expenses", requireAuth, async (req, res) => {
     );
     res.json({
       message: "Expense created successfully.",
-      expense_id: result.lastID,
+      expense_id: result.rows[0].expense_id,
     });
   } catch (err) {
     res.status(500).json({ error: "Failed to create expense." });
   }
 });
 
-// Expenses - PUT (UPDATE)
 app.put("/api/expenses/:id", requireAuth, async (req, res) => {
   const {
     category_id,
@@ -1132,7 +1047,7 @@ app.put("/api/expenses/:id", requireAuth, async (req, res) => {
   try {
     const now = new Date().toISOString();
     await runDb(
-      `UPDATE expenses SET category_id = ?, expense_name = ?, description = ?, amount = ?, 
+      `UPDATE expenses SET category_id = ?, expense_name = ?, description = ?, amount = ?,
               expense_date = ?, payment_method = ?, status = ?, updated_at = ? WHERE expense_id = ?`,
       [
         category_id,
@@ -1152,17 +1067,14 @@ app.put("/api/expenses/:id", requireAuth, async (req, res) => {
   }
 });
 
-// Expenses - DELETE
 app.delete("/api/expenses/:id", requireAuth, async (req, res) => {
   try {
-    // Delete related details first
     await runDb("DELETE FROM inventory_expense_details WHERE expense_id = ?", [
       req.params.id,
     ]);
     await runDb("DELETE FROM operating_expense_details WHERE expense_id = ?", [
       req.params.id,
     ]);
-    // Then delete the main expense
     await runDb("DELETE FROM expenses WHERE expense_id = ?", [req.params.id]);
     res.json({ message: "Expense deleted successfully." });
   } catch (err) {
@@ -1170,7 +1082,6 @@ app.delete("/api/expenses/:id", requireAuth, async (req, res) => {
   }
 });
 
-// Inventory Expense Details - POST
 app.post("/api/inventory-expense-details", requireAuth, async (req, res) => {
   const { expense_id, item_id, quantity, unit_cost, subtotal } = req.body;
   if (!expense_id || !item_id || !quantity || !unit_cost || !subtotal) {
@@ -1188,7 +1099,6 @@ app.post("/api/inventory-expense-details", requireAuth, async (req, res) => {
   }
 });
 
-// Inventory Expense Details - GET by expense ID
 app.get(
   "/api/inventory-expense-details/:expenseId",
   requireAuth,
@@ -1209,12 +1119,10 @@ app.get(
   },
 );
 
-// Operating Expense Details - POST
 app.post("/api/operating-expense-details", requireAuth, async (req, res) => {
   const { expense_id, bill_type, billing_period, provider } = req.body;
-  if (!expense_id) {
+  if (!expense_id)
     return res.status(400).json({ error: "Expense ID is required." });
-  }
   try {
     await runDb(
       `INSERT INTO operating_expense_details (expense_id, bill_type, billing_period, provider)
@@ -1227,7 +1135,6 @@ app.post("/api/operating-expense-details", requireAuth, async (req, res) => {
   }
 });
 
-// Operating Expense Details - GET by expense ID
 app.get(
   "/api/operating-expense-details/:expenseId",
   requireAuth,
@@ -1246,13 +1153,13 @@ app.get(
   },
 );
 
-// ── Analytics Routes ────────────────────────────────────────────
+// ── Analytics ─────────────────────────────────────────────────────
+
 app.get("/api/analytics/daily-sales", requireAuth, async (req, res) => {
   try {
-    const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+    const today = new Date().toISOString().split("T")[0];
     const result = await getDb(
-      `SELECT COALESCE(SUM(total), 0) as amount FROM receipts 
-       WHERE DATE(created_at) = ?`,
+      `SELECT COALESCE(SUM(total), 0) as amount FROM receipts WHERE DATE(created_at::timestamp) = $1`,
       [today],
     );
     res.json({ daily: result?.amount || 0 });
@@ -1263,11 +1170,9 @@ app.get("/api/analytics/daily-sales", requireAuth, async (req, res) => {
 
 app.get("/api/analytics/weekly-sales", requireAuth, async (req, res) => {
   try {
-    // Last 7 days
     const result = await getDb(
-      `SELECT COALESCE(SUM(total), 0) as amount FROM receipts 
-       WHERE DATE(created_at) >= DATE('now', '-7 days')`,
-      [],
+      `SELECT COALESCE(SUM(total), 0) as amount FROM receipts
+       WHERE DATE(created_at::timestamp) >= CURRENT_DATE - INTERVAL '7 days'`,
     );
     res.json({ weekly: result?.amount || 0 });
   } catch (err) {
@@ -1277,11 +1182,9 @@ app.get("/api/analytics/weekly-sales", requireAuth, async (req, res) => {
 
 app.get("/api/analytics/monthly-sales", requireAuth, async (req, res) => {
   try {
-    // Current month
     const result = await getDb(
-      `SELECT COALESCE(SUM(total), 0) as amount FROM receipts 
-       WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')`,
-      [],
+      `SELECT COALESCE(SUM(total), 0) as amount FROM receipts
+       WHERE to_char(created_at::timestamp, 'YYYY-MM') = to_char(NOW(), 'YYYY-MM')`,
     );
     res.json({ monthly: result?.amount || 0 });
   } catch (err) {
@@ -1291,14 +1194,12 @@ app.get("/api/analytics/monthly-sales", requireAuth, async (req, res) => {
 
 app.get("/api/analytics/sales-chart", requireAuth, async (req, res) => {
   try {
-    // Last 7 days daily sales
     const results = await allDb(
-      `SELECT DATE(created_at) as date, COALESCE(SUM(total), 0) as total
+      `SELECT DATE(created_at::timestamp) as date, COALESCE(SUM(total), 0) as total
        FROM receipts
-       WHERE DATE(created_at) >= DATE('now', '-7 days')
-       GROUP BY DATE(created_at)
+       WHERE DATE(created_at::timestamp) >= CURRENT_DATE - INTERVAL '7 days'
+       GROUP BY DATE(created_at::timestamp)
        ORDER BY date ASC`,
-      [],
     );
     res.json({ chartData: results || [] });
   } catch (err) {
@@ -1308,16 +1209,14 @@ app.get("/api/analytics/sales-chart", requireAuth, async (req, res) => {
 
 app.get("/api/analytics/revenue-by-room", requireAuth, async (req, res) => {
   try {
-    // Revenue breakdown by room type for current month
     const results = await allDb(
       `SELECT r.type, COALESCE(SUM(rec.total), 0) as revenue
        FROM receipts rec
        LEFT JOIN bookings b ON rec.booking_id = b.id
        LEFT JOIN rooms r ON b.room_id = r.id
-       WHERE strftime('%Y-%m', rec.created_at) = strftime('%Y-%m', 'now')
+       WHERE to_char(rec.created_at::timestamp, 'YYYY-MM') = to_char(NOW(), 'YYYY-MM')
        GROUP BY r.type
        ORDER BY revenue DESC`,
-      [],
     );
     res.json({ roomRevenue: results || [] });
   } catch (err) {
@@ -1330,65 +1229,54 @@ app.get("/api/analytics/financial-report", requireAuth, async (req, res) => {
   if (!month) return res.status(400).json({ error: "month param required" });
 
   try {
-    let dateFilter = "";
-    let dateParams = [];
+    let dateFilter, dateParams, expDateFilter, expParams;
 
     if (period === "daily") {
       const today = new Date().toISOString().slice(0, 10);
-      dateFilter = "DATE(created_at) = ?";
+      dateFilter = "DATE(created_at::timestamp) = $1";
       dateParams = [today];
-    } else if (period === "weekly") {
-      dateFilter = "DATE(created_at) >= DATE('now', '-7 days')";
-      dateParams = [];
-    } else {
-      // monthly (default)
-      dateFilter = "strftime('%Y-%m', created_at) = ?";
-      dateParams = [month];
-    }
-
-    // Revenue from receipts
-    const revenueRow = await getDb(
-      `SELECT 
-         COALESCE(SUM(room_rate), 0) as room_revenue,
-         COALESCE(SUM(food_amount), 0) as food_revenue,
-         COALESCE(SUM(total), 0) as total_revenue
-       FROM receipts WHERE ${dateFilter}`,
-      dateParams,
-    );
-
-    // Expenses grouped by expense_name
-    let expDateFilter = "";
-    let expParams = [];
-    if (period === "daily") {
-      const today = new Date().toISOString().slice(0, 10);
-      expDateFilter = "DATE(e.expense_date) = ?";
+      expDateFilter = "DATE(e.expense_date::timestamp) = $1";
       expParams = [today];
     } else if (period === "weekly") {
-      expDateFilter = "DATE(e.expense_date) >= DATE('now', '-7 days')";
+      dateFilter =
+        "DATE(created_at::timestamp) >= CURRENT_DATE - INTERVAL '7 days'";
+      dateParams = [];
+      expDateFilter =
+        "DATE(e.expense_date::timestamp) >= CURRENT_DATE - INTERVAL '7 days'";
       expParams = [];
     } else {
-      expDateFilter = "strftime('%Y-%m', e.expense_date) = ?";
+      dateFilter = "to_char(created_at::timestamp, 'YYYY-MM') = $1";
+      dateParams = [month];
+      expDateFilter = "to_char(e.expense_date::timestamp, 'YYYY-MM') = $1";
       expParams = [month];
     }
 
-    const expenseRows = await allDb(
+    const revenueRow = await db.query(
+      `SELECT COALESCE(SUM(room_rate), 0) as room_revenue,
+              COALESCE(SUM(food_amount), 0) as food_revenue,
+              COALESCE(SUM(total), 0) as total_revenue
+       FROM receipts WHERE ${dateFilter}`,
+      dateParams,
+    );
+    const rev = revenueRow.rows[0];
+
+    const expenseRows = await db.query(
       `SELECT ec.category_name, SUM(e.amount) as total
-      FROM expenses e
-      JOIN expense_categories ec ON e.category_id = ec.category_id
-      WHERE ${expDateFilter}
-      GROUP BY ec.category_id, ec.category_name
-      ORDER BY total DESC`,
+       FROM expenses e
+       JOIN expense_categories ec ON e.category_id = ec.category_id
+       WHERE ${expDateFilter}
+       GROUP BY ec.category_id, ec.category_name
+       ORDER BY total DESC`,
       expParams,
     );
 
-    const totalExpenses = expenseRows.reduce(
+    const expenseData = expenseRows.rows;
+    const totalExpenses = expenseData.reduce(
       (sum, r) => sum + parseFloat(r.total || 0),
       0,
     );
-    const netIncome =
-      parseFloat(revenueRow?.total_revenue || 0) - totalExpenses;
+    const netIncome = parseFloat(rev?.total_revenue || 0) - totalExpenses;
 
-    // Sidebar: occupancy for today
     const totalRooms = await getDb(`SELECT COUNT(*) as count FROM rooms`);
     const occupiedRooms = await getDb(
       `SELECT COUNT(*) as count FROM bookings WHERE status = 'occupied' AND checked_out = 0`,
@@ -1396,28 +1284,25 @@ app.get("/api/analytics/financial-report", requireAuth, async (req, res) => {
     const occupancyPct = totalRooms?.count
       ? Math.round((occupiedRooms?.count / totalRooms?.count) * 100)
       : 0;
-
-    // ADR (Average Daily Rate) = room revenue / occupied rooms
     const adr = occupiedRooms?.count
-      ? parseFloat(revenueRow?.room_revenue || 0) / occupiedRooms.count
+      ? parseFloat(rev?.room_revenue || 0) / occupiedRooms.count
       : 0;
 
-    // Weekly trend (last 7 days daily totals)
     const weeklyTrend = await allDb(
-      `SELECT DATE(created_at) as date, COALESCE(SUM(total), 0) as total
+      `SELECT DATE(created_at::timestamp) as date, COALESCE(SUM(total), 0) as total
        FROM receipts
-       WHERE DATE(created_at) >= DATE('now', '-6 days')
-       GROUP BY DATE(created_at)
+       WHERE DATE(created_at::timestamp) >= CURRENT_DATE - INTERVAL '6 days'
+       GROUP BY DATE(created_at::timestamp)
        ORDER BY date ASC`,
     );
 
     res.json({
       revenue: {
-        room: parseFloat(revenueRow?.room_revenue || 0),
-        food: parseFloat(revenueRow?.food_revenue || 0),
-        total: parseFloat(revenueRow?.total_revenue || 0),
+        room: parseFloat(rev?.room_revenue || 0),
+        food: parseFloat(rev?.food_revenue || 0),
+        total: parseFloat(rev?.total_revenue || 0),
       },
-      expenses: expenseRows.map((r) => ({
+      expenses: expenseData.map((r) => ({
         name: r.category_name,
         total: parseFloat(r.total || 0),
       })),
@@ -1436,12 +1321,31 @@ app.get("/api/analytics/financial-report", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/api/test-db", async (req, res) => {
+  try {
+    const result = await db.query(
+      "SELECT NOW() as time, current_database() as database",
+    );
+    res.json({
+      status: "✅ Connected to Supabase!",
+      time: result.rows[0].time,
+      database: result.rows[0].database,
+    });
+  } catch (err) {
+    res.json({
+      status: "❌ Connection failed",
+      error: err.message,
+    });
+  }
+});
+
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-seedDatabase();
-
-app.listen(PORT, () => {
-  console.log(`Hotel management system running at http://localhost:${PORT}`);
+// ── Start ─────────────────────────────────────────────────────────
+seedDatabase().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Hotel management system running at http://localhost:${PORT}`);
+  });
 });
