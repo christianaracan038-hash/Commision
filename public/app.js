@@ -3422,14 +3422,33 @@ async function renderExpensePanel() {
           // Step 2: Save category-specific details
           if (categoryName === "Inventory Expense") {
             const lineItems = document.querySelectorAll(".line-item-row");
+
+            // Step 1: Validate all stock BEFORE saving anything
             for (const row of lineItems) {
               const item_id = row.querySelector(".line-item-select").value;
-              const quantity = row.querySelector(".line-item-qty").value;
+              const quantity = parseInt(
+                row.querySelector(".line-item-qty").value,
+              );
+              const unit_cost = row.querySelector(".line-item-unit-cost").value;
+              if (!item_id || !quantity || !unit_cost) continue;
+
+              const stockCheck = await api("/inventory-items/deduct-stock", {
+                method: "POST",
+                body: JSON.stringify({ item_id, quantity, dry_run: true }), // check only
+              });
+            }
+
+            // Step 2: Save details and deduct stock
+            for (const row of lineItems) {
+              const item_id = row.querySelector(".line-item-select").value;
+              const quantity = parseInt(
+                row.querySelector(".line-item-qty").value,
+              );
               const unit_cost = row.querySelector(".line-item-unit-cost").value;
               const subtotal = row.querySelector(".line-item-subtotal").value;
+              if (!item_id || !quantity || !unit_cost) continue;
 
-              if (!item_id || !quantity || !unit_cost) continue; // skip empty rows
-
+              // Save expense detail
               await api("/inventory-expense-details", {
                 method: "POST",
                 body: JSON.stringify({
@@ -3440,6 +3459,17 @@ async function renderExpensePanel() {
                   subtotal,
                 }),
               });
+
+              // ✅ Deduct stock
+              try {
+                await api("/inventory-items/deduct-stock", {
+                  method: "POST",
+                  body: JSON.stringify({ item_id, quantity }),
+                });
+              } catch (stockErr) {
+                alert(`⚠️ Stock warning: ${stockErr.message}`);
+                // Still continues — expense is saved, just stock deduction failed
+              }
             }
           } else if (categoryName === "Operating Expense") {
             await api("/operating-expense-details", {
@@ -3689,7 +3719,7 @@ async function renderExpensePanel() {
         ${itemsList
           .map(
             (i) => `
-          <option value="${i.item_id}" data-price="${i.unit_price}"
+          <option value="${i.item_id}" data-price="${i.unit_price}" data-stock="${i.stock_quantity}"
             ${item && item.item_id === i.item_id ? "selected" : ""}>
             ${i.item_name} (₱${parseFloat(i.unit_price).toFixed(2)})
           </option>
@@ -3722,6 +3752,20 @@ async function renderExpensePanel() {
       const qty = parseFloat(row.querySelector(".line-item-qty").value) || 1;
       row.querySelector(".line-item-unit-cost").value = price.toFixed(2);
       row.querySelector(".line-item-subtotal").value = (price * qty).toFixed(2);
+
+      // ✅ ADD: Show current stock beside the select
+      const stock = parseInt(selectedOption.dataset.stock) || 0;
+      let stockLabel = row.querySelector(".stock-label");
+      if (!stockLabel) {
+        stockLabel = document.createElement("small");
+        stockLabel.className = "stock-label";
+        stockLabel.style.display = "block";
+        stockLabel.style.marginTop = "4px";
+        e.target.parentNode.appendChild(stockLabel);
+      }
+      stockLabel.textContent = `Stock available: ${stock}`;
+      stockLabel.style.color = stock <= 5 ? "red" : "green";
+
       recalculateTotal();
     });
 
@@ -4514,6 +4558,27 @@ loginForm.addEventListener("submit", async (event) => {
   } catch (err) {
     console.error("Login error:", err);
     loginError.textContent = err.message;
+  }
+});
+
+const sidebarToggle = document.getElementById("sidebar-toggle");
+const appSidebar = document.querySelector(".sidebar");
+const sidebarOverlay = document.getElementById("sidebar-overlay");
+
+sidebarToggle?.addEventListener("click", () => {
+  appSidebar.classList.toggle("open");
+  sidebarOverlay.classList.toggle("visible");
+});
+
+sidebarOverlay?.addEventListener("click", () => {
+  appSidebar.classList.remove("open");
+  sidebarOverlay.classList.remove("visible");
+});
+
+document.getElementById("nav-links")?.addEventListener("click", () => {
+  if (window.innerWidth <= 768) {
+    appSidebar.classList.remove("open");
+    sidebarOverlay.classList.remove("visible");
   }
 });
 

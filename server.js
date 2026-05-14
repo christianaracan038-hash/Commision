@@ -814,6 +814,40 @@ app.get("/api/inventory-items", requireAuth, async (req, res) => {
   }
 });
 
+// Inventory Items - Deduct Stock (must be before /api/inventory-items/:id routes)
+app.post("/api/inventory-items/deduct-stock", requireAuth, async (req, res) => {
+  const { item_id, quantity } = req.body;
+  if (!item_id || !quantity) {
+    return res
+      .status(400)
+      .json({ error: "item_id and quantity are required." });
+  }
+  try {
+    const item = await getDb(
+      "SELECT item_name, stock_quantity FROM inventory_items WHERE item_id = ?",
+      [item_id],
+    );
+    if (!item) return res.status(404).json({ error: "Item not found." });
+
+    if (item.stock_quantity < quantity) {
+      return res.status(400).json({
+        error: `Insufficient stock for "${item.item_name}". Available: ${item.stock_quantity}`,
+      });
+    }
+
+    await runDb(
+      "UPDATE inventory_items SET stock_quantity = stock_quantity - ? WHERE item_id = ?",
+      [quantity, item_id],
+    );
+
+    res.json({ message: "Stock deducted successfully." });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to deduct stock." });
+  }
+});
+
+// Inventory Items - POST
+
 app.post("/api/inventory-items", requireAuth, async (req, res) => {
   const { item_name, stock_quantity, unit_price } = req.body;
   if (!item_name || stock_quantity === undefined || !unit_price) {
@@ -860,6 +894,8 @@ app.delete("/api/inventory-items/:id", requireAuth, async (req, res) => {
     res.status(500).json({ error: "Failed to delete inventory item." });
   }
 });
+
+// Deduct stock quantity when inventory expense is saved
 
 app.get("/api/expenses", requireAuth, async (req, res) => {
   try {

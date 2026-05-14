@@ -46,12 +46,17 @@
       </div>
 
       <div id="app-view" class="view">
+        <!-- ✅ These must be OUTSIDE the sidebar -->
+        <button class="sidebar-toggle" id="sidebar-toggle">☰</button>
+        <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
         <aside class="sidebar">
           <div class="brand">Hotel Management</div>
           <div id="role-label" class="role-label"></div>
           <nav id="nav-links"></nav>
           <button id="logout-button" class="secondary">Logout</button>
         </aside>
+
         <main class="content">
           <section id="dashboard-view" class="panel"></section>
           <section id="rooms-view" class="panel hidden"></section>
