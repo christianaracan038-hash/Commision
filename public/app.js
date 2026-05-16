@@ -3834,7 +3834,7 @@ async function renderSalesPanel() {
   panels.sales.innerHTML = "";
 
   const header = document.createElement("div");
-  header.style.cssText = `display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;`;
+  header.style.cssText = `display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;`;
 
   const title = document.createElement("h2");
   title.textContent = "📊 Financial Report";
@@ -3877,7 +3877,7 @@ async function renderSalesPanel() {
 
   // ── PERIOD TABS ────────────────────────────────────────────────
   const tabBar = document.createElement("div");
-  tabBar.style.cssText = `display:flex;gap:4px;margin-bottom:20px;background:#f8f9fa;padding:4px;border-radius:8px;width:fit-content;`;
+  tabBar.style.cssText = `display:flex;gap:4px;margin-bottom:20px;background:#f8f9fa;padding:4px;border-radius:8px;width:100%;flex-wrap:wrap;`;
   tabBar.innerHTML = `
     <button data-period="daily"   class="report-tab" style="padding:8px 24px;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;background:#007bff;color:white;">DAILY</button>
     <button data-period="weekly"  class="report-tab" style="padding:8px 24px;border:none;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;background:transparent;color:#6c757d;">WEEKLY</button>
@@ -3888,6 +3888,14 @@ async function renderSalesPanel() {
   // ── MAIN LAYOUT ────────────────────────────────────────────────
   const mainLayout = document.createElement("div");
   mainLayout.style.cssText = `display:grid;grid-template-columns:1fr 280px;gap:20px;align-items:start;`;
+
+  if (window.innerWidth <= 768) {
+    mainLayout.style.gridTemplateColumns = "1fr";
+  }
+  window.addEventListener("resize", () => {
+    mainLayout.style.gridTemplateColumns =
+      window.innerWidth <= 768 ? "1fr" : "1fr 280px";
+  });
 
   // Left: Income Statement
   const statementCard = document.createElement("div");
@@ -3955,57 +3963,59 @@ async function renderSalesPanel() {
             )
             .join("");
     statementCard.innerHTML = `
-      <div style="background:#2c3e50;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;">
+       <div style="background:#2c3e50;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
         <span style="color:white;font-weight:700;font-size:15px;">📋 INCOME STATEMENT</span>
         <span style="color:#adb5bd;font-size:13px;">${periodLabel} Report — ${monthPicker.value}</span>
       </div>
 
-      <table style="width:100%;border-collapse:collapse;font-size:14px;">
-        <thead>
-          <tr style="background:#f8f9fa;border-bottom:2px solid #dee2e6;">
-            <th style="padding:10px 16px;text-align:left;color:#2c3e50;font-weight:700;">PARTICULARS</th>
-            <th style="padding:10px 16px;text-align:right;color:#2c3e50;font-weight:700;">${periodLabel.toUpperCase()} (Actual)</th>
-          </tr>
-        </thead>
-        <tbody>
+      <div style="width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <table style="width:100%;min-width:420px;border-collapse:collapse;font-size:14px;">
+          <thead>
+            <tr style="background:#f8f9fa;border-bottom:2px solid #dee2e6;">
+              <th style="padding:10px 16px;text-align:left;color:#2c3e50;font-weight:700;">PARTICULARS</th>
+              <th style="padding:10px 16px;text-align:right;color:#2c3e50;font-weight:700;">${periodLabel.toUpperCase()} (Actual)</th>
+            </tr>
+          </thead>
+          <tbody>
 
-          <!-- REVENUE -->
-          <tr style="background:#eaf4fb;">
-            <td colspan="2" style="padding:8px 16px;font-weight:700;color:#2980b9;font-size:13px;letter-spacing:0.5px;">REVENUE</td>
-          </tr>
-          <tr style="border-bottom:1px solid #f5f5f5;">
-            <td style="padding:9px 16px;padding-left:28px;color:#555;font-weight:700;">🛏 Room Revenue</td>
-            <td style="padding:9px 16px;text-align:right;color:#27ae60;">${fmt(data.revenue.room)}</td>
-          </tr>
-          <tr style="border-bottom:1px solid #f5f5f5;">
-            <td style="padding:9px 16px;padding-left:28px;color:#555;font-weight:700;">🍽 Food & Beverage</td>
-            <td style="padding:9px 16px;text-align:right;color:#27ae60;">${fmt(data.revenue.food)}</td>
-          </tr>
-          <tr style="background:#f0faf4;border-top:2px solid #27ae60;">
-            <td style="padding:10px 16px;font-weight:700;color:#2c3e50;">TOTAL REVENUE</td>
-            <td style="padding:10px 16px;text-align:right;font-weight:700;color:#27ae60;">${fmt(data.revenue.total)}</td>
-          </tr>
+            <!-- REVENUE -->
+            <tr style="background:#eaf4fb;">
+              <td colspan="2" style="padding:8px 16px;font-weight:700;color:#2980b9;font-size:13px;letter-spacing:0.5px;">REVENUE</td>
+            </tr>
+            <tr style="border-bottom:1px solid #f5f5f5;">
+              <td style="padding:9px 16px;padding-left:28px;color:#555;font-weight:700;">🛏 Room Revenue</td>
+              <td style="padding:9px 16px;text-align:right;color:#27ae60;">${fmt(data.revenue.room)}</td>
+            </tr>
+            <tr style="border-bottom:1px solid #f5f5f5;">
+              <td style="padding:9px 16px;padding-left:28px;color:#555;font-weight:700;">🍽 Food & Beverage</td>
+              <td style="padding:9px 16px;text-align:right;color:#27ae60;">${fmt(data.revenue.food)}</td>
+            </tr>
+            <tr style="background:#f0faf4;border-top:2px solid #27ae60;">
+              <td style="padding:10px 16px;font-weight:700;color:#2c3e50;">TOTAL REVENUE</td>
+              <td style="padding:10px 16px;text-align:right;font-weight:700;color:#27ae60;">${fmt(data.revenue.total)}</td>
+            </tr>
 
-          <!-- EXPENSES -->
-          <tr style="background:#fef9f0;">
-            <td colspan="2" style="padding:8px 16px;font-weight:700;color:#e67e22;font-size:13px;letter-spacing:0.5px;">EXPENSES</td>
-          </tr>
-          ${expenseRowsHTML}
-          <tr style="background:#fdf2f2;border-top:2px solid #e74c3c;">
-            <td style="padding:10px 16px;font-weight:700;color:#2c3e50;">TOTAL EXPENSES</td>
-            <td style="padding:10px 16px;text-align:right;font-weight:700;color:#e74c3c;">(${fmt(data.totalExpenses)})</td>
-          </tr>
+            <!-- EXPENSES -->
+            <tr style="background:#fef9f0;">
+              <td colspan="2" style="padding:8px 16px;font-weight:700;color:#e67e22;font-size:13px;letter-spacing:0.5px;">EXPENSES</td>
+            </tr>
+            ${expenseRowsHTML}
+            <tr style="background:#fdf2f2;border-top:2px solid #e74c3c;">
+              <td style="padding:10px 16px;font-weight:700;color:#2c3e50;">TOTAL EXPENSES</td>
+              <td style="padding:10px 16px;text-align:right;font-weight:700;color:#e74c3c;">(${fmt(data.totalExpenses)})</td>
+            </tr>
 
-          <!-- NET INCOME -->
-          <tr style="background:${isNegative ? "#fdf2f2" : "#f0faf4"};border-top:3px solid ${isNegative ? "#e74c3c" : "#27ae60"};">
-            <td style="padding:14px 16px;font-weight:800;font-size:15px;color:#2c3e50;">NET INCOME</td>
-            <td style="padding:14px 16px;text-align:right;font-weight:800;font-size:15px;color:${isNegative ? "#e74c3c" : "#27ae60"};">
-              ${isNegative ? "(" : ""}${fmt(Math.abs(data.netIncome))}${isNegative ? ")" : ""}
-            </td>
-          </tr>
+            <!-- NET INCOME -->
+            <tr style="background:${isNegative ? "#fdf2f2" : "#f0faf4"};border-top:3px solid ${isNegative ? "#e74c3c" : "#27ae60"};">
+              <td style="padding:14px 16px;font-weight:800;font-size:15px;color:#2c3e50;">NET INCOME</td>
+              <td style="padding:14px 16px;text-align:right;font-weight:800;font-size:15px;color:${isNegative ? "#e74c3c" : "#27ae60"};">
+                ${isNegative ? "(" : ""}${fmt(Math.abs(data.netIncome))}${isNegative ? ")" : ""}
+              </td>
+            </tr>
 
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
     `;
   }
 
@@ -4020,7 +4030,7 @@ async function renderSalesPanel() {
       <div style="background:#2c3e50;padding:10px 16px;">
         <span style="color:white;font-weight:700;font-size:13px;">📊 DAILY OVERVIEW</span>
       </div>
-      <div style="padding:16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;text-align:center;">
+      <div style="padding:16px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center;">
         <div>
           <div style="font-size:11px;color:#7f8c8d;margin-bottom:4px;">Occ %</div>
           <div style="font-size:20px;font-weight:700;color:#2c3e50;">${data.sidebar.occupancyPct}%</div>
