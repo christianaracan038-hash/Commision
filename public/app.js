@@ -3032,35 +3032,103 @@ async function renderLedgerPage() {
   }
 }
 
-async function renderHousekeeping() {
-  panels.housekeeping.innerHTML = "<h2>Housekeeping</h2>";
-  const response = await api("/housekeeping/tasks");
-  if (response.tasks.length === 0) {
-    panels.housekeeping.innerHTML += "<p>No housekeeping tasks yet.</p>";
-    return;
-  }
-  const list = document.createElement("div");
-  list.className = "card-list";
-  response.tasks.forEach((task) => {
-    const item = document.createElement("div");
-    item.className = "card task-card";
-    item.innerHTML = `<strong>Room ${task.room_number}</strong><span>Status: ${task.status}</span>`;
-    const button = document.createElement("button");
-    button.textContent = task.status === "ready" ? "Ready" : "Mark Ready";
-    button.disabled = task.status === "ready";
-    button.addEventListener("click", async () => {
-      await api("/housekeeping/ready", {
-        method: "POST",
-        body: JSON.stringify({ taskId: task.id }),
-      });
-      renderPanel("housekeeping");
-    });
-    item.appendChild(button);
-    list.appendChild(item);
-  });
-  panels.housekeeping.appendChild(list);
-}
+async function renderBookingPanel() {
+  panels.booking.innerHTML = "";
+  try {
+    const [roomsData, foodData] = await Promise.all([
+      api("/rooms/available"),
+      api("/rooms/food-orders"),
+    ]);
 
+    // Split purely on housekeeping_status from the room record
+
+    const cleanRooms = roomsData.rooms.filter(
+      (room) => room.housekeeping_status === "Ready",
+    );
+    const dirtyRooms = roomsData.rooms.filter(
+      (room) => room.housekeeping_status !== "Ready",
+    );
+    const mainSection = document.createElement("div");
+    mainSection.className = "rooms-grid";
+    mainSection.style.gridTemplateColumns = "1fr 1fr";
+
+    // --- Available Rooms (checked out + clean) ---
+    const availableCol = document.createElement("div");
+    availableCol.className = "card-column";
+    availableCol.innerHTML = "<h2>AVAILABLE ROOMS</h2>";
+
+    if (cleanRooms.length === 0) {
+      availableCol.innerHTML += "<p>No rooms ready for booking.</p>";
+    } else {
+      cleanRooms.forEach((room) => {
+        const item = document.createElement("div");
+        item.className = "room-item";
+        item.innerHTML = `
+          <div>
+            <strong>Room ${room.number}</strong>
+            <small>${room.type}</small>
+          </div>
+          <div class="actions">
+            <button onclick="openBookingForm({id: ${room.id}, number: '${room.number}', rate: ${room.rate}, type: '${room.type}'})">+</button>
+          </div>
+        `;
+        availableCol.appendChild(item);
+      });
+    }
+    mainSection.appendChild(availableCol);
+
+    // --- Unavailable (checked out but housekeeping not done yet) ---
+    const unavailableCol = document.createElement("div");
+    unavailableCol.className = "card-column";
+    unavailableCol.innerHTML = "<h2>NEEDS CLEANING</h2>";
+
+    if (dirtyRooms.length === 0) {
+      unavailableCol.innerHTML += "<p>All checked-out rooms are clean.</p>";
+    } else {
+      dirtyRooms.forEach((room) => {
+        const item = document.createElement("div");
+        item.className = "room-item room-item--unavailable";
+        item.innerHTML = `
+          <div>
+            <strong>Room ${room.number}</strong>
+            <small>${room.type}</small>
+          </div>
+          <div class="actions">
+            <span class="badge badge--warning">🧹 ${room.housekeeping_status ?? "pending"}</span>
+          </div>
+        `;
+        unavailableCol.appendChild(item);
+      });
+    }
+    mainSection.appendChild(unavailableCol);
+
+    // --- Rooms With Food Orders ---
+    const withOrdersCol = document.createElement("div");
+    withOrdersCol.className = "card-column";
+    withOrdersCol.innerHTML = "<h2>ROOMS WITH ORDERS</h2>";
+
+    if (foodData.orders.length === 0) {
+      withOrdersCol.innerHTML += "<p>No rooms with orders.</p>";
+    } else {
+      foodData.orders.forEach((order) => {
+        const item = document.createElement("div");
+        item.className = "room-item";
+        item.innerHTML = `
+          <div>
+            <strong>Room ${order.room_number}</strong>
+            <small>${order.food_order}</small>
+          </div>
+        `;
+        withOrdersCol.appendChild(item);
+      });
+    }
+    mainSection.appendChild(withOrdersCol);
+
+    panels.booking.appendChild(mainSection);
+  } catch (err) {
+    panels.booking.innerHTML = `<p class="error">Error loading booking panel: ${err.message}</p>`;
+  }
+}
 // ========================================
 // EXPENSE MANAGEMENT PANEL
 // ========================================
